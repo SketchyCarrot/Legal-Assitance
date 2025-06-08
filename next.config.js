@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  swcMinify: true,
   images: {
-    domains: ['*'],
+    domains: ['localhost'],
   },
   webpack: (config) => {
     config.resolve.fallback = {
@@ -10,10 +11,7 @@ const nextConfig = {
       fs: false,
     };
     return config;
-  },
-  experimental: {
-    serverActions: true,
-  },
+  }
 }
 
 module.exports = nextConfig 

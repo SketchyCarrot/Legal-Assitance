@@ -8,6 +8,50 @@ from datetime import datetime
 from conversation_manager import ConversationManager, Message
 from services.azure_openai_service import AzureOpenAIService
 import asyncio
+import sounddevice as sd
+import numpy as np
+from scipy.io.wavfile import write
+import wave
+import os
+from PIL import Image, ImageTk
+
+class VoiceRecorder:
+    def __init__(self):
+        self.recording = False
+        self.frames = []
+        self.sample_rate = 44100
+        
+    def start_recording(self):
+        self.recording = True
+        self.frames = []
+        
+        def callback(indata, frames, time, status):
+            if self.recording:
+                self.frames.append(indata.copy())
+                
+        self.stream = sd.InputStream(
+            channels=1,
+            samplerate=self.sample_rate,
+            callback=callback
+        )
+        self.stream.start()
+        
+    def stop_recording(self):
+        self.recording = False
+        self.stream.stop()
+        self.stream.close()
+        
+        if not os.path.exists('recordings'):
+            os.makedirs('recordings')
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"recordings/recording_{timestamp}.wav"
+        
+        if self.frames:
+            audio_data = np.concatenate(self.frames, axis=0)
+            write(filename, self.sample_rate, audio_data)
+            return filename
+        return None
 
 class ChatInterface:
     def __init__(self, root):
@@ -17,14 +61,17 @@ class ChatInterface:
         self.conversation_manager = ConversationManager()
         self.openai_service = AzureOpenAIService()
         self.conversation_history = []
+        self.voice_recorder = VoiceRecorder()
         
         # Configure root window
-        self.root.geometry("800x600")
+        self.root.geometry("1200x800")  # Increased window size
         self.setup_ui()
         
         # Initialize state
         self.is_typing = False
+        self.is_recording = False
         self.typing_thread = None
+        self.current_view = "chat"  # Track current view
         
         # Configure text tags
         self.configure_tags()
@@ -45,8 +92,19 @@ class ChatInterface:
         self.main_container.pack(fill=tk.BOTH, expand=True)
         
         # Configure grid weights
-        self.main_container.grid_columnconfigure(0, weight=1)
+        self.main_container.grid_columnconfigure(1, weight=1)  # Changed to 1 to account for sidebar
         self.main_container.grid_rowconfigure(0, weight=1)
+
+        # Create sidebar
+        self.create_sidebar()
+        
+        # Create main content area
+        self.content_container = ttk.Frame(self.main_container)
+        self.content_container.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        
+        # Configure content container grid weights
+        self.content_container.grid_columnconfigure(0, weight=1)
+        self.content_container.grid_rowconfigure(0, weight=1)
 
         # Create chat area
         self.create_chat_area()
@@ -66,26 +124,60 @@ class ChatInterface:
         # Start conversation
         self.start_conversation()
 
+    def create_sidebar(self):
+        """Create the sidebar navigation"""
+        # Sidebar container
+        self.sidebar = ttk.Frame(self.main_container, style="Sidebar.TFrame")
+        self.sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+        
+        # Add logo or title
+        title_label = ttk.Label(
+            self.sidebar,
+            text="Legal Assistant",
+            style="SidebarTitle.TLabel"
+        )
+        title_label.pack(pady=(0, 20), padx=10)
+        
+        # Navigation buttons
+        nav_buttons = [
+            ("💬 Chat", lambda: self.switch_view("chat")),
+            ("📋 History", lambda: self.switch_view("history")),
+            ("⚙️ Settings", lambda: self.switch_view("settings")),
+            ("❓ Help", lambda: self.switch_view("help"))
+        ]
+        
+        for text, command in nav_buttons:
+            btn = ttk.Button(
+                self.sidebar,
+                text=text,
+                command=command,
+                style="Sidebar.TButton",
+                width=20
+            )
+            btn.pack(pady=5, padx=10)
+
     def create_chat_area(self):
         """Create the chat message area"""
-        # Chat container
-        chat_container = ttk.Frame(self.main_container)
-        chat_container.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+        # Chat container with border
+        chat_frame = ttk.Frame(self.content_container, style="ChatFrame.TFrame")
+        chat_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
         
         # Configure grid weights
-        chat_container.grid_columnconfigure(0, weight=1)
-        chat_container.grid_rowconfigure(0, weight=1)
+        chat_frame.grid_columnconfigure(0, weight=1)
+        chat_frame.grid_rowconfigure(0, weight=1)
         
         # Chat display
         self.chat_display = scrolledtext.ScrolledText(
-            chat_container,
+            chat_frame,
             wrap=tk.WORD,
-            font=("Arial", 10),
-            padx=10,
-            pady=10,
-            height=20
+            font=("Arial", 11),  # Increased font size
+            padx=15,
+            pady=15,
+            height=25,
+            background="#ffffff",
+            borderwidth=0
         )
-        self.chat_display.grid(row=0, column=0, sticky="nsew")
+        self.chat_display.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         self.chat_display.config(state=tk.DISABLED)
         
         # Bind scroll event
@@ -93,90 +185,232 @@ class ChatInterface:
 
     def create_input_area(self):
         """Create the message input area"""
-        # Input container
-        input_container = ttk.Frame(self.main_container)
-        input_container.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        # Input container with border
+        input_frame = ttk.Frame(self.content_container, style="InputFrame.TFrame")
+        input_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         
         # Configure grid weights
-        input_container.grid_columnconfigure(1, weight=1)
+        input_frame.grid_columnconfigure(1, weight=1)
         
-        # Message input
-        self.message_input = ttk.Entry(
-            input_container,
-            font=("Arial", 10)
+        # Voice input button
+        self.voice_button = ttk.Button(
+            input_frame,
+            text="🎤",
+            command=self.toggle_recording,
+            style="Round.TButton",
+            width=3
         )
-        self.message_input.grid(row=0, column=1, sticky="ew", padx=(0, 10))
+        self.voice_button.grid(row=0, column=0, padx=(10, 10), pady=10)
+        
+        # Message input with placeholder
+        self.message_input = ttk.Entry(
+            input_frame,
+            font=("Arial", 11),
+            style="Chat.TEntry"
+        )
+        self.message_input.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=10)
+        self.set_input_placeholder()
         
         # Send button
         self.send_button = ttk.Button(
-            input_container,
+            input_frame,
             text="Send",
             command=lambda: self.send_message(),
+            style="Primary.TButton",
             width=10
         )
-        self.send_button.grid(row=0, column=2)
+        self.send_button.grid(row=0, column=2, padx=(0, 10), pady=10)
         
         # Bind enter key
         self.message_input.bind("<Return>", lambda e: self.send_message())
-
-    def create_progress_bar(self):
-        """Create the progress tracking bar"""
-        # Progress container
-        progress_container = ttk.Frame(self.main_container)
-        progress_container.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         
-        # Progress label
-        self.progress_label = ttk.Label(
-            progress_container,
-            text="Progress: 0%"
-        )
-        self.progress_label.pack(side=tk.LEFT)
-        
-        # Progress bar
-        self.progress_bar = ttk.Progressbar(
-            progress_container,
-            mode='determinate',
-            length=200
-        )
-        self.progress_bar.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+        # Bind focus events for placeholder text
+        self.message_input.bind("<FocusIn>", self.on_entry_click)
+        self.message_input.bind("<FocusOut>", self.on_focus_out)
 
-    def create_quick_reply_area(self):
-        """Create the quick reply buttons area"""
-        self.quick_reply_container = ttk.Frame(self.main_container)
-        self.quick_reply_container.grid(row=3, column=0, sticky="ew")
+    def set_input_placeholder(self):
+        """Set placeholder text for input field"""
+        self.message_input.insert(0, "Type your message here...")
+        self.message_input.config(foreground="gray")
+
+    def on_entry_click(self, event):
+        """Handle input field click"""
+        if self.message_input.get() == "Type your message here...":
+            self.message_input.delete(0, tk.END)
+            self.message_input.config(foreground="black")
+
+    def on_focus_out(self, event):
+        """Handle input field focus out"""
+        if self.message_input.get() == "":
+            self.set_input_placeholder()
+
+    def switch_view(self, view_name):
+        """Switch between different views"""
+        self.current_view = view_name
+        
+        # Update UI based on selected view
+        if view_name == "chat":
+            self.content_container.tkraise()
+        elif view_name == "history":
+            self.show_history_view()
+        elif view_name == "settings":
+            self.show_settings_view()
+        elif view_name == "help":
+            self.show_help_view()
+
+    def show_history_view(self):
+        """Show conversation history view"""
+        # Create history window
+        history_window = tk.Toplevel(self.root)
+        history_window.title("Conversation History")
+        history_window.geometry("600x400")
+        
+        # Add history content
+        history_text = scrolledtext.ScrolledText(
+            history_window,
+            wrap=tk.WORD,
+            font=("Arial", 11),
+            padx=15,
+            pady=15
+        )
+        history_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Add conversation history
+        for message in self.conversation_history:
+            timestamp = datetime.fromisoformat(message.timestamp).strftime("%Y-%m-%d %H:%M")
+            sender = "You" if message.sender == "user" else "Assistant"
+            history_text.insert(tk.END, f"{timestamp} - {sender}:\n{message.content}\n\n")
+        
+        history_text.config(state=tk.DISABLED)
+
+    def show_settings_view(self):
+        """Show settings view"""
+        # Create settings window
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Settings")
+        settings_window.geometry("400x300")
+        
+        # Add settings options
+        ttk.Label(settings_window, text="Settings", font=("Arial", 16, "bold")).pack(pady=20)
+        
+        # Theme selection
+        ttk.Label(settings_window, text="Theme:").pack(pady=5)
+        theme_var = tk.StringVar(value="light")
+        ttk.Radiobutton(settings_window, text="Light", variable=theme_var, value="light").pack()
+        ttk.Radiobutton(settings_window, text="Dark", variable=theme_var, value="dark").pack()
+        
+        # Font size selection
+        ttk.Label(settings_window, text="Font Size:").pack(pady=5)
+        font_size_var = tk.StringVar(value="medium")
+        ttk.Radiobutton(settings_window, text="Small", variable=font_size_var, value="small").pack()
+        ttk.Radiobutton(settings_window, text="Medium", variable=font_size_var, value="medium").pack()
+        ttk.Radiobutton(settings_window, text="Large", variable=font_size_var, value="large").pack()
+
+    def show_help_view(self):
+        """Show help view"""
+        # Create help window
+        help_window = tk.Toplevel(self.root)
+        help_window.title("Help")
+        help_window.geometry("600x400")
+        
+        # Add help content
+        help_text = scrolledtext.ScrolledText(
+            help_window,
+            wrap=tk.WORD,
+            font=("Arial", 11),
+            padx=15,
+            pady=15
+        )
+        help_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Add help content
+        help_content = """
+Legal Assistant Help
+
+Getting Started:
+1. Type your legal question in the chat box
+2. Use the voice input button (🎤) to speak your question
+3. Click Send or press Enter to submit
+
+Features:
+- Text and voice input
+- Multi-language support
+- Legal document assistance
+- Form filling help
+
+Tips:
+- Be specific with your questions
+- Use clear language
+- Provide relevant details
+- Check the conversation history for previous answers
+
+For more help, visit our documentation or contact support.
+"""
+        help_text.insert(tk.END, help_content)
+        help_text.config(state=tk.DISABLED)
 
     def apply_styles(self):
         """Apply custom styles to the interface"""
         style = ttk.Style()
         
         # Configure frame styles
-        style.configure("TFrame", background="#ffffff")
-        
-        # Configure button styles
         style.configure(
-            "TButton",
-            padding=5,
-            font=("Arial", 10)
+            "Sidebar.TFrame",
+            background="#f0f0f0",
+            relief="flat"
         )
         
         style.configure(
-            "Quick.TButton",
+            "ChatFrame.TFrame",
+            background="#ffffff",
+            relief="solid",
+            borderwidth=1
+        )
+        
+        style.configure(
+            "InputFrame.TFrame",
+            background="#ffffff",
+            relief="solid",
+            borderwidth=1
+        )
+        
+        # Configure button styles
+        style.configure(
+            "Sidebar.TButton",
+            padding=10,
+            font=("Arial", 11),
+            background="#f0f0f0",
+            relief="flat"
+        )
+        
+        style.configure(
+            "Primary.TButton",
+            padding=10,
+            font=("Arial", 11),
+            background="#007bff",
+            foreground="#ffffff"
+        )
+        
+        style.configure(
+            "Round.TButton",
             padding=5,
-            font=("Arial", 9)
+            font=("Arial", 11),
+            relief="flat"
         )
         
         # Configure label styles
         style.configure(
-            "TLabel",
-            font=("Arial", 10),
-            background="#ffffff"
+            "SidebarTitle.TLabel",
+            font=("Arial", 16, "bold"),
+            background="#f0f0f0",
+            padding=(0, 20)
         )
         
-        # Configure progress bar style
+        # Configure entry style
         style.configure(
-            "TProgressbar",
-            thickness=20,
-            background="#4CAF50"
+            "Chat.TEntry",
+            padding=10,
+            relief="flat"
         )
 
     def show_typing_indicator(self):
@@ -445,3 +679,59 @@ class ChatInterface:
     def on_mousewheel(self, event):
         """Handle mouse wheel scrolling"""
         self.chat_display.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def toggle_recording(self):
+        """Toggle voice recording on/off"""
+        if not self.is_recording:
+            self.start_recording()
+        else:
+            self.stop_recording()
+
+    def start_recording(self):
+        """Start voice recording"""
+        self.is_recording = True
+        self.voice_button.configure(text="⏺")
+        self.voice_recorder.start_recording()
+        
+        # Add recording indicator to chat
+        self.chat_display.config(state=tk.NORMAL)
+        self.chat_display.insert(tk.END, "\nRecording audio...\n", "system_message")
+        self.chat_display.see(tk.END)
+        self.chat_display.config(state=tk.DISABLED)
+
+    def stop_recording(self):
+        """Stop voice recording and process the audio"""
+        self.is_recording = False
+        self.voice_button.configure(text="🎤")
+        
+        # Stop recording and get the filename
+        audio_file = self.voice_recorder.stop_recording()
+        
+        if audio_file:
+            # Add processing indicator to chat
+            self.chat_display.config(state=tk.NORMAL)
+            self.chat_display.insert(tk.END, "Processing audio...\n", "system_message")
+            self.chat_display.see(tk.END)
+            self.chat_display.config(state=tk.DISABLED)
+            
+            # Process the audio file (you'll need to implement this based on your speech-to-text service)
+            self.process_audio_file(audio_file)
+
+    def process_audio_file(self, audio_file):
+        """Process the recorded audio file using speech-to-text"""
+        try:
+            # Here you would typically send the audio file to a speech-to-text service
+            # For now, we'll just add a placeholder message
+            self.chat_display.config(state=tk.NORMAL)
+            self.chat_display.insert(tk.END, f"Audio file saved: {audio_file}\n", "system_message")
+            self.chat_display.see(tk.END)
+            self.chat_display.config(state=tk.DISABLED)
+            
+            # TODO: Implement actual speech-to-text processing
+            # You can use Azure Speech Services, Google Speech-to-Text, or other services
+            
+        except Exception as e:
+            self.chat_display.config(state=tk.NORMAL)
+            self.chat_display.insert(tk.END, f"Error processing audio: {str(e)}\n", "error_message")
+            self.chat_display.see(tk.END)
+            self.chat_display.config(state=tk.DISABLED)
