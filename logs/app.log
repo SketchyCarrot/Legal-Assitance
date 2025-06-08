@@ -1,0 +1,10 @@
+2025-06-08 08:30:56,372 - __main__ - WARNING - Could not load application icon
+2025-06-08 08:52:49,394 - __main__ - WARNING - Could not load application icon
+2025-06-08 10:00:37,380 - __main__ - WARNING - Could not load application icon
+2025-06-08 10:02:51,537 - __main__ - WARNING - Could not load application icon
+2025-06-08 10:02:56,280 - httpx - INFO - HTTP Request: POST https://theincredibles.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview "HTTP/1.1 200 OK"
+2025-06-08 10:03:19,035 - httpx - INFO - HTTP Request: POST https://theincredibles.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview "HTTP/1.1 200 OK"
+2025-06-08 10:05:23,840 - __main__ - WARNING - Could not load application icon
+2025-06-08 10:05:28,445 - httpx - INFO - HTTP Request: POST https://theincredibles.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview "HTTP/1.1 200 OK"
+2025-06-08 10:07:34,641 - __main__ - WARNING - Could not load application icon
+2025-06-08 10:07:55,777 - httpx - INFO - HTTP Request: POST https://theincredibles.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview "HTTP/1.1 200 OK"
